@@ -1,0 +1,20 @@
+{
+  "name": "nanopay-llm",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Per-output-token USDC billing for LLM inference on Arc via Circle Nanopayments",
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "dev:server": "pnpm --filter @nanopay/server dev",
+    "dev:web": "pnpm --filter @nanopay/web dev",
+    "dev:mcp": "pnpm --filter @nanopay/mcp dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "contracts:build": "cd contracts && forge build",
+    "contracts:test": "cd contracts && forge test"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^20.12.0"
+  }
+}
