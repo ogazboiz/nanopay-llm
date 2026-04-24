@@ -8,7 +8,7 @@ export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   const body = await req.text();
-  const upstream = await fetch(`${SERVER}/demo/stress`, {
+  const upstream = await fetch(`${SERVER}/run/stress`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body,

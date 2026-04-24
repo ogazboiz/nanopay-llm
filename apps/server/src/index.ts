@@ -6,7 +6,7 @@ import { streamChat, isMockMode } from "./gemini.js";
 import { openStream, closeStream, billToken } from "./billing.js";
 import { runAgentChain } from "./chain.js";
 import { serviceAccount } from "./arc.js";
-import { runDemoBuyer } from "./demo-buyer.js";
+import { runBuyerFlow } from "./buyer.js";
 import { runStress } from "./stress.js";
 import { runAgent } from "./agent.js";
 import { registerAgentIfNeeded, getAgentIdForService } from "./erc8004.js";
@@ -155,7 +155,7 @@ if (gateway) {
   app.post("/chain", handleChain);
 }
 
-app.post("/demo/agent", async (req, res) => {
+app.post("/run/agent", async (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -172,7 +172,7 @@ app.post("/demo/agent", async (req, res) => {
   }
 });
 
-app.post("/demo/stress", async (req, res) => {
+app.post("/run/stress", async (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -189,13 +189,13 @@ app.post("/demo/stress", async (req, res) => {
   }
 });
 
-app.post("/demo/run-stream", async (req, res) => {
+app.post("/run/stream", async (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
   try {
-    await runDemoBuyer(req.body, (event) => {
+    await runBuyerFlow(req.body, (event) => {
       res.write(`data: ${JSON.stringify(event)}\n\n`);
     });
   } catch (err) {

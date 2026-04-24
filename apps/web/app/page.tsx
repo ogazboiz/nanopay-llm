@@ -143,7 +143,7 @@ export default function Home() {
       const endpoint =
         mode === "stress" ? "/api/stress" :
         mode === "agent" ? "/api/agent" :
-        "/api/demo";
+        "/api/run";
 
       const body =
         mode === "stress"
@@ -540,7 +540,7 @@ function PromptCard({
         className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20 resize-none font-sans disabled:opacity-60"
         placeholder="Ask Gemini something..."
       />
-      <RunBar running={running} onRun={onRun} onStop={onStop} label="Run demo" />
+      <RunBar running={running} onRun={onRun} onStop={onStop} label="Pay & Stream" />
     </div>
   );
 }

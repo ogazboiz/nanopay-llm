@@ -13,7 +13,7 @@ interface DemoRequest {
 const DEMO_KEY = process.env.DEMO_BUYER_PRIVATE_KEY as `0x${string}` | undefined;
 const SERVER_URL = process.env.SELF_URL ?? `http://localhost:${process.env.PORT ?? 8787}`;
 
-export async function runDemoBuyer(body: DemoRequest, emit: Emit): Promise<void> {
+export async function runBuyerFlow(body: DemoRequest, emit: Emit): Promise<void> {
   if (!DEMO_KEY) {
     emit({
       error:

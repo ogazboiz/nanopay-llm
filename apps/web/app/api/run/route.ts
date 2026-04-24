@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   const body = await req.text();
-  const upstream = await fetch(`${SERVER}/demo/run-stream`, {
+  const upstream = await fetch(`${SERVER}/run/stream`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body,
