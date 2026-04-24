@@ -7,7 +7,7 @@ optimizer = true
 optimizer_runs = 200
 
 [rpc_endpoints]
-arc_testnet = "${ARC_RPC_URL}"
+arc_testnet = "${ARC_RPC_URL:-https://rpc.testnet.arc.network}"
 
 [etherscan]
 arc_testnet = { key = "${ARC_EXPLORER_KEY}", url = "${ARC_EXPLORER_URL}" }
