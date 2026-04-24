@@ -17,7 +17,7 @@ export async function runDemoBuyer(body: DemoRequest, emit: Emit): Promise<void>
   if (!DEMO_KEY) {
     emit({
       error:
-        "DEMO_BUYER_PRIVATE_KEY not set. Fund a wallet at https://faucet.circle.com and paste its key into apps/server/.env to run the on-chain demo.",
+        "DEMO_BUYER_PRIVATE_KEY not set. Fund a wallet at https://faucet.circle.com and paste its key into apps/server/.env.",
     });
     return;
   }
@@ -31,7 +31,7 @@ export async function runDemoBuyer(body: DemoRequest, emit: Emit): Promise<void>
   const balances = await client.getBalances();
   emit({ status: "balance", available: balances.gateway.formattedAvailable });
 
-  if (balances.gateway.available < 1_000_000n) {
+  if (balances.gateway.available < 100_000n) {
     emit({ status: "depositing 1 USDC to Gateway" });
     const deposit = await client.deposit("1");
     emit({ status: "deposited", tx: deposit.depositTxHash });
@@ -47,27 +47,50 @@ export async function runDemoBuyer(body: DemoRequest, emit: Emit): Promise<void>
     maxUsd: body.maxUsd ?? 0.05,
   };
 
-  const { data, status } = await client.pay(url, {
+  const result = await client.pay(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
   });
 
-  emit({ status: "x402 paid", httpStatus: status });
+  emit({
+    status: "x402 paid",
+    httpStatus: result.status,
+    amount: result.formattedAmount,
+    transaction: result.transaction,
+  });
 
-  if (typeof data === "string") {
-    for (const chunk of data.split("\n\n")) {
-      if (!chunk.trim()) continue;
-      const dataLine = chunk.split("\n").find((l) => l.startsWith("data: "));
-      if (dataLine) {
-        try {
-          emit(JSON.parse(dataLine.slice(6)));
-        } catch {
-          emit({ raw: dataLine });
-        }
+  const data = result.data as {
+    payment?: Record<string, unknown>;
+    tokens?: string[];
+    fullText?: string;
+    tokenCount?: number;
+    totalPaidUsd?: number;
+    events?: Array<Record<string, unknown>>;
+    reasonerText?: string;
+    drafterText?: string;
+  };
+
+  if (data.payment) emit({ ...data.payment, verified: true });
+
+  if (data.events) {
+    for (const ev of data.events) {
+      if (ev.token) {
+        emit(ev);
+        await new Promise((r) => setTimeout(r, 40));
       }
     }
-  } else if (data) {
-    emit({ data });
+  } else if (data.tokens) {
+    for (const token of data.tokens) {
+      emit({ token, totalPaid: data.totalPaidUsd });
+      await new Promise((r) => setTimeout(r, 40));
+    }
   }
+
+  emit({
+    status: "done",
+    tokenCount: data.tokenCount,
+    totalPaidUsd: data.totalPaidUsd,
+    transaction: result.transaction,
+  });
 }

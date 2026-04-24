@@ -59,29 +59,17 @@ program
       maxUsd: Number(opts.maxUsd),
     };
     console.log(`Paying for ${opts.server}`);
-    const { data, status } = await c.pay(opts.server, {
+    const result = await c.pay(opts.server, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-    console.log(`HTTP ${status}\n`);
-    if (typeof data === "string") {
-      for (const chunk of data.split("\n\n")) {
-        const line = chunk.split("\n").find((l) => l.startsWith("data: "));
-        if (!line) continue;
-        try {
-          const payload = JSON.parse(line.slice(6));
-          if (payload.token) process.stdout.write(payload.token);
-          else if (payload.totalPaid !== undefined)
-            process.stderr.write(`\n[paid $${payload.totalPaid.toFixed(6)}]\n`);
-        } catch {
-          console.log(line);
-        }
-      }
-      process.stdout.write("\n");
-    } else {
-      console.log(data);
-    }
+    console.log(`HTTP ${result.status} · paid ${result.formattedAmount} USDC · tx ${result.transaction || "(none)"}`);
+    const data = result.data as { fullText?: string; tokenCount?: number; totalPaidUsd?: number };
+    console.log(`\n${data.fullText ?? ""}\n`);
+    console.log(
+      `tokens: ${data.tokenCount ?? 0} · offchain paid: $${(data.totalPaidUsd ?? 0).toFixed(6)}`,
+    );
   });
 
 program
@@ -92,13 +80,21 @@ program
   .option("--server <url>", "Seller endpoint", "http://localhost:8787/chain")
   .action(async (opts) => {
     const c = client();
-    const { data, status } = await c.pay(opts.server, {
+    const result = await c.pay(opts.server, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ prompt: opts.prompt, maxUsd: Number(opts.maxUsd) }),
     });
-    console.log(`HTTP ${status}\n`);
-    console.log(data);
+    console.log(`HTTP ${result.status} · paid ${result.formattedAmount} USDC · tx ${result.transaction || "(none)"}`);
+    const data = result.data as {
+      reasonerText?: string;
+      drafterText?: string;
+      reasonerTokens?: number;
+      drafterTokens?: number;
+    };
+    console.log(`\n--- reasoner ---\n${data.reasonerText ?? ""}`);
+    console.log(`\n--- drafter ---\n${data.drafterText ?? ""}`);
+    console.log(`\nreasoner tokens: ${data.reasonerTokens ?? 0} · drafter tokens: ${data.drafterTokens ?? 0}`);
   });
 
 program.parseAsync(process.argv);

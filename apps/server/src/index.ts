@@ -2,6 +2,11 @@ import "dotenv/config";
 import express, { Request, Response, RequestHandler } from "express";
 import cors from "cors";
 import { createGatewayMiddleware } from "@circle-fin/x402-batching/server";
+import { streamChat, isMockMode } from "./gemini.js";
+import { openStream, closeStream, billToken } from "./billing.js";
+import { runAgentChain } from "./chain.js";
+import { serviceAccount } from "./arc.js";
+import { runDemoBuyer } from "./demo-buyer.js";
 
 type PaidRequest = Request & {
   payment?: {
@@ -12,11 +17,6 @@ type PaidRequest = Request & {
     transaction?: string;
   };
 };
-import { streamChat, isMockMode } from "./gemini.js";
-import { openStream, closeStream, billToken } from "./billing.js";
-import { runAgentChain } from "./chain.js";
-import { serviceAccount } from "./arc.js";
-import { runDemoBuyer } from "./demo-buyer.js";
 
 const SELLER_ADDRESS = (process.env.SELLER_ADDRESS ?? serviceAccount?.address) as
   | `0x${string}`
@@ -52,15 +52,8 @@ app.get("/health", (_req, res) => {
   });
 });
 
-function writeSseHeaders(res: Response) {
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders();
-}
-
 const handleStream: RequestHandler = async (req, res) => {
-  const body = req.body as {
+  const body = (req.body ?? {}) as {
     userWallet?: `0x${string}`;
     model?: string;
     prompt?: string;
@@ -71,51 +64,40 @@ const handleStream: RequestHandler = async (req, res) => {
     body.userWallet ??
     "0x000000000000000000000000000000000000dEaD") as `0x${string}`;
   const model = body.model ?? "gemini-3-flash";
-  const prompt = body.prompt ?? "";
+  const prompt = body.prompt ?? "Explain why per-token on-chain billing needs Arc.";
   const maxUsd = body.maxUsd ?? 0.05;
 
   const streamId = await openStream({ userWallet, model, maxUsd });
-  writeSseHeaders(res);
+  const tokens: string[] = [];
+  let budgetExhausted = false;
 
-  if (paymentReq.payment) {
-    res.write(
-      `event: payment\ndata: ${JSON.stringify({
-        verified: paymentReq.payment.verified,
-        payer: paymentReq.payment.payer,
-        amount: paymentReq.payment.amount,
-        network: paymentReq.payment.network,
-        transaction: paymentReq.payment.transaction,
-      })}\n\n`,
-    );
-  }
-
-  let aborted = false;
-  req.on("close", () => {
-    aborted = true;
-  });
-
-  try {
-    for await (const token of streamChat(model, prompt)) {
-      if (aborted) break;
-      try {
-        const tx = await billToken(streamId, token);
-        res.write(
-          `data: ${JSON.stringify({ token, tx: tx.hash, totalPaid: tx.totalPaid })}\n\n`,
-        );
-      } catch (err) {
-        res.write(`event: error\ndata: ${JSON.stringify({ message: (err as Error).message })}\n\n`);
-        break;
-      }
+  for await (const token of streamChat(model, prompt)) {
+    try {
+      await billToken(streamId, token);
+      tokens.push(token);
+    } catch {
+      budgetExhausted = true;
+      break;
     }
-  } finally {
-    const summary = await closeStream(streamId);
-    res.write(`event: done\ndata: ${JSON.stringify({ streamId, ...summary })}\n\n`);
-    res.end();
   }
+
+  const summary = await closeStream(streamId);
+
+  res.json({
+    payment: paymentReq.payment ?? null,
+    streamId,
+    model,
+    tokens,
+    fullText: tokens.join(""),
+    tokenCount: summary?.tokens ?? tokens.length,
+    totalPaidUsd: summary?.totalPaid ?? 0,
+    attestationTx: summary?.attestationTx ?? null,
+    budgetExhausted,
+  });
 };
 
 const handleChain: RequestHandler = async (req, res) => {
-  const body = req.body as {
+  const body = (req.body ?? {}) as {
     userWallet?: `0x${string}`;
     prompt?: string;
     maxUsd?: number;
@@ -126,30 +108,32 @@ const handleChain: RequestHandler = async (req, res) => {
   const userWallet = (paymentReq.payment?.payer ??
     body.userWallet ??
     "0x000000000000000000000000000000000000dEaD") as `0x${string}`;
-  const prompt = body.prompt ?? "";
+  const prompt = body.prompt ?? "Explain why per-token on-chain billing needs Arc.";
   const maxUsd = body.maxUsd ?? 0.1;
   const reasoner = body.reasoner ?? "gemini-3-pro";
   const drafter = body.drafter ?? "gemini-3-flash";
 
-  writeSseHeaders(res);
+  const events: unknown[] = [];
+  const reasonerTokens: string[] = [];
+  const drafterTokens: string[] = [];
 
-  if (paymentReq.payment) {
-    res.write(
-      `event: payment\ndata: ${JSON.stringify(paymentReq.payment)}\n\n`,
-    );
+  for await (const event of runAgentChain(prompt, [
+    { role: "reasoner", model: reasoner, userWallet, maxUsd: maxUsd / 2 },
+    { role: "drafter", model: drafter, userWallet, maxUsd: maxUsd / 2 },
+  ])) {
+    events.push(event);
+    if (event.role === "reasoner" && event.token) reasonerTokens.push(event.token);
+    if (event.role === "drafter" && event.token) drafterTokens.push(event.token);
   }
 
-  try {
-    for await (const event of runAgentChain(prompt, [
-      { role: "reasoner", model: reasoner, userWallet, maxUsd: maxUsd / 2 },
-      { role: "drafter", model: drafter, userWallet, maxUsd: maxUsd / 2 },
-    ])) {
-      res.write(`data: ${JSON.stringify(event)}\n\n`);
-    }
-  } finally {
-    res.write(`event: done\ndata: {}\n\n`);
-    res.end();
-  }
+  res.json({
+    payment: paymentReq.payment ?? null,
+    events,
+    reasonerText: reasonerTokens.join(""),
+    drafterText: drafterTokens.join(""),
+    reasonerTokens: reasonerTokens.length,
+    drafterTokens: drafterTokens.length,
+  });
 };
 
 if (gateway) {
@@ -162,7 +146,10 @@ if (gateway) {
 }
 
 app.post("/demo/run-stream", async (req, res) => {
-  writeSseHeaders(res);
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
   try {
     await runDemoBuyer(req.body, (event) => {
       res.write(`data: ${JSON.stringify(event)}\n\n`);
