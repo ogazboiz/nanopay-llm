@@ -1,45 +1,67 @@
 # NanoPay LLM
 
-Per-output-token billing for AI inference, settled on-chain in USDC on Arc via Circle Nanopayments.
+Per-output-token USDC billing for AI inference, settled via **Circle Nanopayments** on **Arc Testnet**.
 
 ## What it does
 
-Every token an LLM generates triggers a sub-cent USDC nanopayment on Arc. Users pay for exactly what they consume. Stop reading mid-response, billing halts instantly. No subscriptions, no prepaid credits, no overcharge.
+Every token an LLM generates is paid for with a sub-cent USDC authorization, batched and settled onchain by Circle Gateway. Users sign **one** offchain EIP-3009 authorization and receive hundreds of tokens. Stop reading mid-response, no further settlement happens. No subscriptions, no prepaid credits, no overcharge.
 
 ## Why it needs Arc
 
 - Gemini bills per output token at fractions of a cent.
-- Passing through that cost in real time requires per-token on-chain settlement.
-- Ethereum gas is around $2 per tx. A single token is worth $0.0001. Off by 20,000x.
-- Arc delivers sub-cent USDC fees and sub-second finality, which is the only environment where per-token settlement is economically viable.
+- Ethereum gas per transaction is around $2; a single token is worth $0.0001. Settling each one individually is off by 20,000×.
+- Circle Nanopayments batches many offchain authorizations into single onchain settlements via Circle Gateway.
+- Arc gives sub-cent USDC fees and sub-second finality. The marginal per-token settlement cost approaches zero. This is the only environment where per-token billing is economically viable.
+
+## Required technology used
+
+- **Arc Testnet** (chain 5042002) — EVM L1 for all settlement.
+- **USDC** — native gas and payment asset on Arc.
+- **Circle Nanopayments** (`@circle-fin/x402-batching`) — the exact infrastructure primitive.
+- **Circle Gateway** — unified USDC balance, facilitator for verify + settle.
+- **x402 protocol** — web-native 402 Payment Required standard.
 
 ## Features
 
-- **Per-token streaming billing**: every output token from Gemini fires a USDC nanopayment on Arc.
-- **On-chain spending policy**: per-stream caps enforced by contract. Blown budget halts the stream automatically.
-- **Agent-to-agent chains**: Gemini Pro can sub-call Gemini Flash, each hop billed per token on-chain.
-- **x402 per-request mode**: non-streaming endpoints (embeddings, single completions) billed per call via x402 facilitator.
-- **Service registry**: on-chain catalog of priced LLM endpoints. Agents query and route to the cheapest model that meets their constraints.
-- **Receipt attestations**: every stream closes with an on-chain record of tokens paid and quality signal.
-- **MCP server**: exposes billing as a tool so any MCP-compatible agent can plug in.
-- **CLI**: one-command model registration.
+- `gateway.require("$X.XX")` middleware on the seller. `GatewayClient.pay()` on the buyer.
+- Per-token streaming billing via Gemini, counted offchain.
+- Agent-to-agent payment chain: Gemini 3 Pro plans, Gemini 3 Flash drafts, each hop is a separate x402-paid call.
+- On-chain safety contracts (Foundry): ServiceRegistry, SpendingPolicy, Attestation.
+- MCP server exposing NanoPay as tools for any MCP-compatible agent.
+- CLI buyer (`nanopay balance / deposit / buy / chain`) for the authentic external-buyer demo.
+- Web UI with live x402 flow events and Arcscan links.
 
 ## Tracks
 
 - Usage-Based Compute Billing (primary)
-- Per-API Monetization (x402 layer)
-- Agent-to-Agent Payment Loop (Pro to Flash sub-calls)
-- Real-Time Micro-Commerce (token-by-token commerce)
-- Google Prize (Gemini + Function Calling)
+- Per-API Monetization (`gateway.require()`)
+- Agent-to-Agent Payment Loop (Pro → Flash)
+- Real-Time Micro-Commerce
+- Google Prize (Gemini)
 
-## Stack
+## Quickstart
 
-- **Settlement**: Arc L1, USDC, Circle Nanopayments
-- **Wallets**: Circle Wallets
-- **Payment protocols**: Circle Nanopayments (per-token), x402 (per-request)
-- **LLM**: Gemini 3 Flash and Pro
-- **Agent interface**: MCP server, CLI
+```sh
+pnpm install
+cp apps/server/.env.example apps/server/.env
+# edit .env: set GEMINI_API_KEY (optional), SELLER_ADDRESS, DEMO_BUYER_PRIVATE_KEY
+pnpm dev:server    # terminal 1
+pnpm dev:web       # terminal 2
+```
 
-## Status
+Open http://localhost:3000, click **Run demo**. See `DEMO.md` for the full walkthrough.
 
-Early build. Hackathon dates: April 20 to 26, 2026.
+## Layout
+
+```
+apps/server       Express seller + Gateway middleware + Gemini proxy
+apps/web          Next.js UI with live x402 flow visualization
+packages/cli      External buyer CLI using GatewayClient
+packages/mcp      MCP server exposing NanoPay as agent tools
+packages/shared   Shared TypeScript types
+contracts         Foundry Solidity: ServiceRegistry, SpendingPolicy, Attestation
+```
+
+## Hackathon
+
+[Agentic Economy on Arc](https://lablab.ai) — April 20-26, 2026.

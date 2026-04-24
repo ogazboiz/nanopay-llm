@@ -1,22 +1,30 @@
 # NanoPay LLM Demo
 
-This doc gets a judge from a fresh clone to a live per-token billing demo in under 5 minutes.
+This doc gets a judge from a fresh clone to a live x402-paid, Gateway-batched per-token billing demo.
 
 ## What you will see
 
-A chat UI where typing a prompt streams tokens from Gemini. Every token fires a USDC nanopayment on Arc Testnet. The counter climbs token by token. Each settlement row links to the Arc block explorer.
+A chat UI where typing a prompt triggers a full Circle Nanopayments flow:
+
+1. Buyer checks Gateway balance; deposits 1 USDC on Arc Testnet if needed (one-time onchain transaction).
+2. Buyer hits the seller's paid LLM endpoint and receives `402 Payment Required`.
+3. Buyer signs an **EIP-3009 TransferWithAuthorization** offchain — zero gas.
+4. Seller verifies the signature via Circle's Gateway facilitator.
+5. Seller streams Gemini tokens back. Each token counts down the paid allowance.
+6. Gateway batches many such authorizations and settles them onchain periodically on Arc.
+7. The UI shows every stage: deposit tx, payment verification, token stream, final settlement tx hash on Arcscan.
 
 Two demo modes:
 
-1. **Single stream** — one Gemini model (Flash) billed per output token.
-2. **Agent chain** — Gemini 3 Pro plans an outline, then hands off to Gemini 3 Flash which drafts the answer. Each hop opens its own on-chain stream and settles per token.
+1. **Single stream** — one Gemini model (Flash) paid via one x402 authorization.
+2. **Agent chain** — Gemini 3 Pro plans an outline, then hands off to Gemini 3 Flash which drafts the answer. Each hop is its own x402-paid call, demonstrating the agent-to-agent payment loop.
 
 ## Prerequisites
 
-- Node 20+ and pnpm 9+
-- Foundry (for contract tests)
+- Node 20+, pnpm 9+
+- Foundry (for the contract tests)
+- Arc Testnet USDC in a private key wallet: https://faucet.circle.com
 - Optional: `GEMINI_API_KEY` from Google AI Studio. Without it, the server ships a mock streaming reply so the demo still runs.
-- Optional: Arc Testnet deployer key with USDC from https://faucet.circle.com and a deployed set of contracts. Without these, the server runs in pass-through mode (tx hashes are the zero hash; the UI still flows).
 
 ## One-command install
 
@@ -24,38 +32,55 @@ Two demo modes:
 pnpm install
 ```
 
-## Run the demo (mock mode, no keys needed)
+## Configure for the on-chain demo
+
+Copy and fill `apps/server/.env`:
+
+```sh
+cp apps/server/.env.example apps/server/.env
+```
+
+Set at minimum:
+
+```
+GEMINI_API_KEY=...                   # optional; mock runs without it
+SELLER_ADDRESS=0x...                 # receiving wallet for paid streams
+DEMO_BUYER_PRIVATE_KEY=0x...         # wallet with Arc Testnet USDC
+GATEWAY_FACILITATOR_URL=https://gateway-api-testnet.circle.com
+```
+
+Fund the buyer wallet with a small amount of USDC from https://faucet.circle.com. The first demo run will automatically deposit 1 USDC into the Gateway Wallet contract (onchain, one-time, handled by `GatewayClient.deposit()`).
+
+## Run the servers
 
 ```sh
 pnpm dev:server   # terminal 1, port 8787
 pnpm dev:web      # terminal 2, port 3000
 ```
 
-Open http://localhost:3000. Click **Stream**. A mock reply streams in token by token with a live counter.
+Open http://localhost:3000 and click **Run demo**. You will see:
 
-Click **Agent chain (Pro → Flash)** to see the two-hop pattern. The reasoner output fills first, then the drafter.
+- `checking balance` → `balance · X USDC`
+- `depositing 1 USDC to Gateway` → `deposited · 0x...` (only on first run)
+- `calling paid endpoint · http://localhost:8787/stream`
+- `payment verified · payer 0x... · 50000 units · eip155:5042002`
+- Tokens stream in; counters tick
+- `settlement tx 0x...` → click through to https://testnet.arcscan.app
 
-## Run the demo (Gemini live, no chain)
+## Run the buyer CLI
 
-Copy `apps/server/.env.example` to `apps/server/.env`, set `GEMINI_API_KEY`, restart the server. Tokens stream from Gemini; settlement stays mocked (zero hash).
+For an authentic external-buyer demo (no web UI):
 
-## Run the demo (Gemini + Arc live)
+```sh
+export PRIVATE_KEY=0x...               # buyer key with Arc Testnet USDC
+cd packages/cli
+pnpm dev balance
+pnpm dev deposit 1
+pnpm dev buy --prompt "Explain Arc"
+pnpm dev chain --prompt "Plan then draft an Arc pitch"
+```
 
-1. Get Arc Testnet USDC from https://faucet.circle.com.
-2. Deploy contracts:
-   ```sh
-   cd contracts
-   DEPLOYER_PRIVATE_KEY=0x... forge script script/Deploy.s.sol --rpc-url arc_testnet --broadcast
-   ```
-3. Paste the three deployed addresses into `apps/server/.env`:
-   ```
-   SERVICE_REGISTRY_ADDRESS=0x...
-   SPENDING_POLICY_ADDRESS=0x...
-   ATTESTATION_ADDRESS=0x...
-   SERVICE_WALLET_PRIVATE_KEY=0x...
-   ```
-4. From a user wallet, call `SpendingPolicy.setPolicy(dailyCap, perStreamCap, perTxCap)` and `USDC.approve(serviceWallet, allowance)`.
-5. Restart the server and stream. Every token now fires a real `transferFrom` on Arc. Click any tx hash in the settlement list to view it on https://testnet.arcscan.app.
+Each `buy` or `chain` call triggers a full x402 round trip, streams Gemini tokens, and routes settlement through the Gateway facilitator.
 
 ## Contract tests
 
@@ -69,19 +94,30 @@ forge test
 
 Expected: 5 passing (ServiceRegistry, SpendingPolicy × 3, Attestation).
 
-## Margin story for judges
+## Mock-only mode (no keys, no funding)
+
+Skip `SELLER_ADDRESS` and `DEMO_BUYER_PRIVATE_KEY` entirely. The server opens routes without x402 gating, the mock Gemini emits a canned reply, and the UI still streams. This is useful for the first clone/test run but does **not** show the Nanopayments flow.
+
+## Margin story
 
 - A Gemini Flash output token is worth ~$0.00005.
-- Settling each token on Ethereum mainnet costs ~$2.00 in gas.
-- Ratio: settlement cost is 40,000× the value settled. The model collapses.
-- On Arc Testnet, settlement is a fraction of a cent with sub-second finality. The same 500-token reply produces 500 settlements and the gas floor never swallows the product.
+- Settling each token individually on Ethereum mainnet costs ~$2.00 in gas.
+- Ratio: 40,000× more expensive to settle than the value being settled.
+- Circle Nanopayments fixes this by batching many offchain authorizations into single onchain settlements on Arc, where fees are a fraction of a cent and finality is sub-second.
+- 500-token chat response → 500 authorizations → 1 batched settlement onchain. On Ethereum, that would be 500 × $2 in gas. On Arc via Gateway, it's one batch. Orders of magnitude cheaper.
 
-A one-minute chat produces 200 to 500 tokens. That is 200 to 500 on-chain transactions per interaction. The hackathon requirement is 50+.
+## Tracks hit
 
-## Submission tracks hit
-
-1. **Usage-Based Compute Billing** — primary. Per-token settlement aligned with usage.
-2. **Per-API Monetization** — Gemini proxy is a pay-per-call API gated by USDC.
-3. **Agent-to-Agent Payment Loop** — reasoner-drafter chain, each hop billed per token.
+1. **Usage-Based Compute Billing** — primary. Per-token authorizations aligned to real token output.
+2. **Per-API Monetization** — the seller's Express app uses `gateway.require("$0.05")` as per-call pricing.
+3. **Agent-to-Agent Payment Loop** — reasoner → drafter chain, each hop paid via x402.
 4. **Real-Time Micro-Commerce** — token-by-token commerce between user and LLM.
 5. **Google Prize** — Gemini 3 Flash and Pro are the core inference models.
+
+## Required technologies covered
+
+- **Arc Testnet** (chain 5042002) — settlement layer.
+- **USDC** (ERC-20 at `0x3600000000000000000000000000000000000000`, 6 decimals) — value.
+- **Circle Nanopayments** (`@circle-fin/x402-batching`) — the exact infrastructure primitive.
+- **Circle Gateway** — unified USDC balance, batched settlement via `GatewayWallet` and `GatewayMinter`.
+- **x402 protocol** — `gateway.require()` middleware + `client.pay()` buyer automation.

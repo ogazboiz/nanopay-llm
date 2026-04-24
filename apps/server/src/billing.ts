@@ -1,16 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { keccak256, stringToBytes, stringToHex, zeroHash } from "viem";
-import {
-  publicClient,
-  walletClient,
-  serviceAccount,
-  usdToMicro,
-  usdToUsdcUnits,
-  USDC_ADDRESS,
-  SPENDING_POLICY_ADDRESS,
-  ATTESTATION_ADDRESS,
-} from "./arc.js";
-import { spendingPolicyAbi, attestationAbi, erc20Abi } from "./abi.js";
+import { publicClient, walletClient, usdToMicro, ATTESTATION_ADDRESS } from "./arc.js";
+import { attestationAbi } from "./abi.js";
 
 interface Stream {
   id: string;
@@ -25,7 +16,7 @@ interface Stream {
   openedAt: number;
 }
 
-interface TxResult {
+interface TokenResult {
   hash: `0x${string}`;
   totalPaid: number;
 }
@@ -65,7 +56,7 @@ export async function openStream(opts: {
   return id;
 }
 
-export async function billToken(streamId: string, _token: string): Promise<TxResult> {
+export async function billToken(streamId: string, _token: string): Promise<TokenResult> {
   const stream = streams.get(streamId);
   if (!stream) throw new Error(`Unknown stream ${streamId}`);
 
@@ -74,65 +65,50 @@ export async function billToken(streamId: string, _token: string): Promise<TxRes
     throw new Error("Stream budget exhausted");
   }
 
-  const amountMicroUsd = usdToMicro(amountUsd);
-
-  if (walletClient && serviceAccount) {
-    const allowed = await publicClient.readContract({
-      address: SPENDING_POLICY_ADDRESS,
-      abi: spendingPolicyAbi,
-      functionName: "canCharge",
-      args: [stream.userWallet, amountMicroUsd],
-    });
-    if (!allowed) throw new Error("SpendingPolicy rejected charge");
-
-    const hash = await walletClient.writeContract({
-      address: USDC_ADDRESS,
-      abi: erc20Abi,
-      functionName: "transferFrom",
-      args: [stream.userWallet, serviceAccount.address, usdToUsdcUnits(amountUsd)],
-    });
-
-    await walletClient.writeContract({
-      address: SPENDING_POLICY_ADDRESS,
-      abi: spendingPolicyAbi,
-      functionName: "charge",
-      args: [stream.userWallet, amountMicroUsd],
-    });
-
-    stream.tokensBilled += 1;
-    stream.totalPaidUsd += amountUsd;
-    return { hash, totalPaid: stream.totalPaidUsd };
-  }
-
   stream.tokensBilled += 1;
   stream.totalPaidUsd += amountUsd;
+
   return { hash: zeroHash, totalPaid: stream.totalPaidUsd };
 }
 
-export async function closeStream(streamId: string, qualityScore = 5): Promise<{
-  tokens: number;
-  totalPaid: number;
-  attestationTx?: `0x${string}`;
-} | undefined> {
+export async function closeStream(
+  streamId: string,
+  qualityScore = 5,
+): Promise<
+  | {
+      tokens: number;
+      totalPaid: number;
+      attestationTx?: `0x${string}`;
+    }
+  | undefined
+> {
   const stream = streams.get(streamId);
   if (!stream) return undefined;
   streams.delete(streamId);
 
   let attestationTx: `0x${string}` | undefined;
-  if (walletClient && stream.tokensBilled > 0) {
-    attestationTx = await walletClient.writeContract({
-      address: ATTESTATION_ADDRESS,
-      abi: attestationAbi,
-      functionName: "anchor",
-      args: [
-        stream.streamIdBytes,
-        stream.userWallet,
-        stream.providerId,
-        BigInt(stream.tokensBilled),
-        usdToMicro(stream.totalPaidUsd),
-        qualityScore,
-      ],
-    });
+  if (
+    walletClient &&
+    ATTESTATION_ADDRESS !== "0x0000000000000000000000000000000000000000" &&
+    stream.tokensBilled > 0
+  ) {
+    try {
+      attestationTx = await walletClient.writeContract({
+        address: ATTESTATION_ADDRESS,
+        abi: attestationAbi,
+        functionName: "anchor",
+        args: [
+          stream.streamIdBytes,
+          stream.userWallet,
+          stream.providerId,
+          BigInt(stream.tokensBilled),
+          usdToMicro(stream.totalPaidUsd),
+          qualityScore,
+        ],
+      });
+    } catch (err) {
+      console.warn("[attestation] anchor failed:", (err as Error).message);
+    }
   }
 
   return {
@@ -141,3 +117,5 @@ export async function closeStream(streamId: string, qualityScore = 5): Promise<{
     attestationTx,
   };
 }
+
+export { publicClient };

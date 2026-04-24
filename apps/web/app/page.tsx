@@ -1,48 +1,65 @@
 "use client";
 import { useRef, useState } from "react";
 
-type Mode = "single" | "chain";
+type Mode = "stream" | "chain";
 
-interface TxRow {
+interface Event {
+  status?: string;
+  httpStatus?: number;
+  url?: string;
+  available?: string;
+  tx?: string;
+  verified?: boolean;
+  payer?: string;
+  amount?: string;
+  network?: string;
+  transaction?: string;
+  token?: string;
   role?: "reasoner" | "drafter";
   model?: string;
-  tx: string;
-  amount: number;
+  totalPaid?: number;
+  error?: string;
+  [k: string]: unknown;
 }
 
 const EXPLORER = "https://testnet.arcscan.app";
 
 export default function Home() {
-  const [mode, setMode] = useState<Mode>("single");
-  const [prompt, setPrompt] = useState("Explain why per-token on-chain billing needs Arc.");
-  const [output, setOutput] = useState("");
-  const [chainOutput, setChainOutput] = useState({ reasoner: "", drafter: "" });
-  const [txs, setTxs] = useState<TxRow[]>([]);
+  const [mode, setMode] = useState<Mode>("stream");
+  const [prompt, setPrompt] = useState(
+    "Explain why per-token on-chain billing needs Circle Nanopayments on Arc.",
+  );
+  const [events, setEvents] = useState<Event[]>([]);
+  const [text, setText] = useState<{ single: string; reasoner: string; drafter: string }>({
+    single: "",
+    reasoner: "",
+    drafter: "",
+  });
   const [running, setRunning] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
-  const totalPaid = txs.reduce((sum, t) => sum + t.amount, 0);
+  const txs = events.filter((e) => e.tx || e.transaction);
+  const totalPaid = events.reduce(
+    (s, e) => (e.totalPaid !== undefined ? e.totalPaid : s),
+    0,
+  );
+  const tokensEmitted = events.filter((e) => e.token).length;
+  const payment = events.find((e) => e.verified !== undefined);
+  const settlementTx = payment?.transaction;
 
   async function run() {
-    setOutput("");
-    setChainOutput({ reasoner: "", drafter: "" });
-    setTxs([]);
+    setEvents([]);
+    setText({ single: "", reasoner: "", drafter: "" });
     setRunning(true);
 
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
-      const endpoint = mode === "single" ? "/api/stream" : "/api/chain";
-      const body =
-        mode === "single"
-          ? { prompt, model: "gemini-3-flash", maxUsd: 0.05 }
-          : { prompt, maxUsd: 0.1 };
-
-      const res = await fetch(endpoint, {
+      const res = await fetch("/api/demo", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ endpoint: mode, prompt, maxUsd: mode === "chain" ? 0.1 : 0.05 }),
         signal: controller.signal,
       });
 
@@ -58,33 +75,23 @@ export default function Home() {
         const parts = buf.split("\n\n");
         buf = parts.pop() ?? "";
         for (const part of parts) {
-          const dataLine = part.split("\n").find((l) => l.startsWith("data: "));
-          if (!dataLine) continue;
-          const payload = JSON.parse(dataLine.slice(6));
-
-          if (payload.done) continue;
-          if (!payload.token) continue;
-
-          if (mode === "single") {
-            setOutput((prev) => prev + payload.token);
-          } else {
-            setChainOutput((prev) => ({
-              ...prev,
-              [payload.role]: (prev[payload.role as "reasoner" | "drafter"] ?? "") + payload.token,
-            }));
+          const line = part.split("\n").find((l) => l.startsWith("data: "));
+          if (!line) continue;
+          try {
+            const payload: Event = JSON.parse(line.slice(6));
+            setEvents((prev) => [...prev, payload]);
+            if (payload.token) {
+              if (payload.role === "reasoner") {
+                setText((p) => ({ ...p, reasoner: p.reasoner + payload.token }));
+              } else if (payload.role === "drafter") {
+                setText((p) => ({ ...p, drafter: p.drafter + payload.token }));
+              } else {
+                setText((p) => ({ ...p, single: p.single + payload.token }));
+              }
+            }
+          } catch {
+            // skip non-JSON
           }
-
-          const prevTotal = txs.reduce((s, t) => s + t.amount, 0);
-          const amount = (payload.totalPaid ?? prevTotal) - prevTotal;
-          setTxs((prev) => [
-            ...prev,
-            {
-              role: payload.role,
-              model: payload.model,
-              tx: payload.tx,
-              amount: amount > 0 ? amount : 0.00005,
-            },
-          ]);
         }
       }
     } catch (err) {
@@ -99,39 +106,26 @@ export default function Home() {
   }
 
   return (
-    <main
-      style={{
-        maxWidth: 960,
-        margin: "32px auto",
-        padding: "0 24px",
-        color: "#111",
-      }}
-    >
-      <header style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 4 }}>
-        <h1 style={{ fontSize: 28, margin: 0 }}>NanoPay LLM</h1>
-        <span style={{ color: "#666", fontSize: 14 }}>per-token USDC billing on Arc</span>
+    <main style={{ maxWidth: 960, margin: "32px auto", padding: "0 24px", color: "#111" }}>
+      <header style={{ marginBottom: 8 }}>
+        <h1 style={{ fontSize: 30, margin: 0 }}>NanoPay LLM</h1>
+        <p style={{ color: "#555", marginTop: 6 }}>
+          Per-token USDC billing for AI inference. Payments settle via{" "}
+          <b>Circle Nanopayments</b> on{" "}
+          <a href={EXPLORER} target="_blank" rel="noreferrer" style={{ color: "#0070f3" }}>
+            Arc Testnet
+          </a>
+          . Buyer signs one offchain x402 authorization. Circle Gateway batches and settles onchain.
+        </p>
       </header>
-      <p style={{ color: "#555", marginTop: 0 }}>
-        Every token settles as a sub-cent USDC nanopayment on{" "}
-        <a href={EXPLORER} target="_blank" rel="noreferrer" style={{ color: "#0070f3" }}>
-          Arc Testnet
-        </a>
-        . Stop reading, billing stops.
-      </p>
+
+      <Flow />
 
       <div style={{ display: "flex", gap: 8, margin: "16px 0" }}>
-        <button
-          onClick={() => setMode("single")}
-          disabled={running}
-          style={tabStyle(mode === "single")}
-        >
+        <button onClick={() => setMode("stream")} disabled={running} style={tab(mode === "stream")}>
           Single stream
         </button>
-        <button
-          onClick={() => setMode("chain")}
-          disabled={running}
-          style={tabStyle(mode === "chain")}
-        >
+        <button onClick={() => setMode("chain")} disabled={running} style={tab(mode === "chain")}>
           Agent chain (Pro → Flash)
         </button>
       </div>
@@ -152,20 +146,20 @@ export default function Home() {
       />
 
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-        <button onClick={run} disabled={running} style={primaryButton}>
-          {running ? "Streaming..." : "Stream"}
+        <button onClick={run} disabled={running} style={primary}>
+          {running ? "Running demo..." : "Run demo (buyer → x402 → seller)"}
         </button>
-        <button onClick={stop} disabled={!running} style={secondaryButton}>
+        <button onClick={stop} disabled={!running} style={secondary}>
           Stop
         </button>
       </div>
 
-      {mode === "single" ? (
-        <OutputPane title="Output" text={output} />
+      {mode === "stream" ? (
+        <OutputPane title="Output" text={text.single} />
       ) : (
         <>
-          <OutputPane title="Reasoner (Gemini 3 Pro)" text={chainOutput.reasoner} />
-          <OutputPane title="Drafter (Gemini 3 Flash)" text={chainOutput.drafter} />
+          <OutputPane title="Reasoner (Gemini 3 Pro)" text={text.reasoner} />
+          <OutputPane title="Drafter (Gemini 3 Flash)" text={text.drafter} />
         </>
       )}
 
@@ -177,48 +171,81 @@ export default function Home() {
           gap: 12,
         }}
       >
-        <Metric label="tokens" value={txs.length.toString()} />
+        <Metric label="tokens" value={tokensEmitted.toString()} />
         <Metric label="paid" value={`$${totalPaid.toFixed(6)}`} />
-        <Metric label="on-chain txs" value={txs.length.toString()} />
+        <Metric
+          label="settlement"
+          value={
+            settlementTx ? `${settlementTx.slice(0, 10)}...` : payment?.verified ? "verified" : "-"
+          }
+        />
       </div>
 
-      {txs.length > 0 && (
-        <div style={{ marginTop: 20 }}>
-          <div style={{ fontSize: 13, color: "#666", marginBottom: 6 }}>
-            Recent settlements (latest 10)
-          </div>
-          <ul
-            style={{
-              listStyle: "none",
-              padding: 0,
-              margin: 0,
-              fontFamily: "ui-monospace, monospace",
-              fontSize: 12,
-            }}
-          >
-            {txs.slice(-10).reverse().map((t, i) => (
-              <li
-                key={i}
-                style={{ display: "flex", gap: 8, padding: "4px 0", borderBottom: "1px solid #f0f0f0" }}
-              >
-                {t.role && <span style={{ color: "#0070f3", width: 72 }}>{t.role}</span>}
-                <a
-                  href={`${EXPLORER}/tx/${t.tx}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ color: "#444", textDecoration: "none" }}
-                >
-                  {t.tx.slice(0, 10)}…{t.tx.slice(-6)}
-                </a>
-                <span style={{ marginLeft: "auto", color: "#666" }}>
-                  ${t.amount.toFixed(6)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <EventsList events={events} />
     </main>
+  );
+}
+
+function Flow() {
+  return (
+    <div
+      style={{
+        padding: "10px 14px",
+        border: "1px dashed #ddd",
+        borderRadius: 8,
+        fontSize: 13,
+        color: "#666",
+        marginTop: 6,
+      }}
+    >
+      Buyer signs <b>EIP-3009</b> (zero gas) → seller verifies → tokens stream → Circle Gateway{" "}
+      <b>batches settlement</b> on Arc.
+    </div>
+  );
+}
+
+function EventsList({ events }: { events: Event[] }) {
+  const rows = events
+    .filter((e) => e.status || e.httpStatus || e.verified !== undefined || e.transaction || e.error)
+    .slice(-8);
+  if (rows.length === 0) return null;
+  return (
+    <div style={{ marginTop: 20 }}>
+      <div style={{ fontSize: 13, color: "#666", marginBottom: 6 }}>
+        x402 flow events
+      </div>
+      <ul
+        style={{
+          listStyle: "none",
+          padding: 0,
+          margin: 0,
+          fontFamily: "ui-monospace, monospace",
+          fontSize: 12,
+        }}
+      >
+        {rows.map((e, i) => {
+          let label = "";
+          if (e.error) label = `error: ${e.error}`;
+          else if (e.verified !== undefined)
+            label = `payment verified · payer ${String(e.payer).slice(0, 10)}… · ${e.amount} units · ${e.network}`;
+          else if (e.transaction) label = `settlement tx ${String(e.transaction).slice(0, 20)}…`;
+          else if (e.status) label = e.status + (e.available ? ` · ${e.available} USDC` : "");
+          else if (e.httpStatus) label = `HTTP ${e.httpStatus}`;
+          return (
+            <li
+              key={i}
+              style={{
+                padding: "4px 0",
+                borderBottom: "1px solid #f0f0f0",
+                color: e.error ? "#c00" : "#333",
+              }}
+            >
+              {label}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
@@ -254,7 +281,14 @@ function Metric({ label, value }: { label: string; value: string }) {
         textAlign: "center",
       }}
     >
-      <div style={{ fontSize: 12, color: "#888", textTransform: "uppercase", letterSpacing: 0.5 }}>
+      <div
+        style={{
+          fontSize: 12,
+          color: "#888",
+          textTransform: "uppercase",
+          letterSpacing: 0.5,
+        }}
+      >
         {label}
       </div>
       <div style={{ fontSize: 22, fontFamily: "ui-monospace, monospace", marginTop: 4 }}>
@@ -264,7 +298,7 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-const tabStyle = (active: boolean): React.CSSProperties => ({
+const tab = (active: boolean): React.CSSProperties => ({
   padding: "8px 14px",
   background: active ? "#111" : "#fff",
   color: active ? "#fff" : "#333",
@@ -274,7 +308,7 @@ const tabStyle = (active: boolean): React.CSSProperties => ({
   fontSize: 13,
 });
 
-const primaryButton: React.CSSProperties = {
+const primary: React.CSSProperties = {
   padding: "10px 18px",
   background: "#0070f3",
   color: "#fff",
@@ -284,7 +318,7 @@ const primaryButton: React.CSSProperties = {
   fontSize: 14,
 };
 
-const secondaryButton: React.CSSProperties = {
+const secondary: React.CSSProperties = {
   padding: "10px 18px",
   background: "#fff",
   color: "#333",

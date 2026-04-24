@@ -13,8 +13,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@circle-fin/x402-batching": "^3.0.2",
     "@nanopay/shared": "workspace:*",
     "commander": "^12.1.0",
+    "dotenv": "^16.4.0",
     "viem": "^2.21.0"
   },
   "devDependencies": {

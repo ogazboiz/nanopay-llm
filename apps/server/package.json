@@ -11,13 +11,18 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@circle-fin/x402-batching": "^3.0.2",
     "@google/generative-ai": "^0.21.0",
     "@nanopay/shared": "workspace:*",
+    "cors": "^2.8.6",
     "dotenv": "^16.4.0",
+    "express": "^5.2.1",
     "fastify": "^4.28.0",
     "viem": "^2.21.0"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
     "tsx": "^4.19.0",
     "typescript": "^5.5.0"
   }
