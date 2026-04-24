@@ -3,90 +3,79 @@
 ## Flow: x402 + Gateway batched settlement
 
 ```
-Buyer (GatewayClient, CLI or web demo)
+Buyer  (GatewayClient · CLI / web / Gemini agent)
   │
-  │ 1. Deposit 1 USDC into GatewayWallet contract on Arc   (one-time, onchain)
-  │ 2. POST /stream with { prompt, maxUsd }
+  │ 1. Deposit USDC into GatewayWallet on Arc        (one-time onchain)
+  │ 2. POST paid endpoint with prompt / goal
   ▼
-Seller (apps/server, Express)
-  │   gateway.require("$0.05") middleware
-  │      → returns 402 Payment Required with x402 requirements
+Seller (apps/server · Express · createGatewayMiddleware)
+  │    gateway.require("$0.05") returns HTTP 402 with requirements
   ▲
-  │ 3. Buyer signs EIP-3009 TransferWithAuthorization (offchain, zero gas)
-  │ 4. Retries POST /stream with PAYMENT-SIGNATURE header
+  │ 3. Buyer signs EIP-3009 TransferWithAuthorization  (offchain, zero gas)
+  │ 4. Retries with PAYMENT-SIGNATURE header
   ▼
 Seller
-  │ 5. Middleware calls Gateway facilitator
-  │      POST https://gateway-api-testnet.circle.com/v1/x402/verify
-  │    Payment verified → req.payment populated
-  │ 6. Streams Gemini tokens via SSE; per-token offchain counter
-  │ 7. On close, middleware submits authorization to
-  │      POST /v1/x402/settle
+  │ 5. Middleware verifies at https://gateway-api-testnet.circle.com/v1/x402/verify
+  │ 6. req.payment populated → handler runs
+  │ 7. Server bills per token / runs agent / fires N authorizations
+  │ 8. Middleware submits settle request to Gateway
+  │ 9. On stream close: ERC-8004 giveFeedback(agentId, score, …) recorded onchain
   ▼
 Circle Gateway
-  │ 8. Gateway batches many authorizations across time/users
-  │ 9. Settles net positions onchain via GatewayMinter on Arc
+  │ Batches many authorizations across time + buyers
+  │ Settles net positions onchain via GatewayMinter on Arc
   ▼
-Arc Testnet (EVM L1, chain 5042002)
-  - USDC (ERC-20 at 0x3600...)
-  - GatewayWallet contract (0x0077...)
-  - GatewayMinter contract (0x0022...)
-  - SpendingPolicy (ours, optional on-chain spend caps)
-  - ServiceRegistry (ours, on-chain LLM catalog)
-  - Attestation (ours, optional receipt anchor)
+Arc Testnet (EVM L1 · chain 5042002)
+  USDC (ERC-20 at 0x3600…)
+  GatewayWallet     0x0077…
+  GatewayMinter     0x0022…
+  IdentityRegistry  0x8004…A818 (ERC-8004 canonical)
+  ReputationRegistry 0x8004…B663 (ERC-8004 canonical)
+  ValidationRegistry 0x8004…Cb1B (ERC-8004 canonical)
+  ServiceRegistry (ours, optional)
+  SpendingPolicy  (ours, optional)
+  Attestation     (ours, optional)
 ```
 
 ## Components
 
-### apps/server
-Express server with `createGatewayMiddleware`. Two paid routes:
-- `POST /stream` — `gateway.require("$0.05")`, streams Gemini tokens.
-- `POST /chain` — `gateway.require("$0.10")`, agent-to-agent reasoner → drafter.
+### apps/server (Express)
+- `POST /stream` — `gateway.require("$0.05")`, returns JSON with tokens array, total paid, attestation tx, reputation tx.
+- `POST /chain` — `gateway.require("$0.10")`, reasoner-drafter agent chain.
+- `POST /demo/run-stream` — server-side GatewayClient proxy for the web UI single/chain demo (SSE to browser).
+- `POST /demo/stress` — sequential N-authorization stress runner (satisfies 50+ tx requirement).
+- `POST /demo/agent` — Gemini 3 Pro Function Calling loop. Tools: `get_gateway_balance`, `deposit_usdc_to_gateway`, `pay_for_inference`.
+- `GET /health` — reports Gateway readiness, seller, ERC-8004 agent ID.
 
-Also exposes:
-- `POST /demo/run-stream` — internal wallet hits the paid routes via GatewayClient so the web UI can show the full buyer flow without the user holding a key.
-- `GET /health` — reports gateway readiness, network, seller address.
-
-Billing is offchain per-token accounting. Settlement is delegated to Circle Gateway via the facilitator.
-
-### apps/web
-Next.js UI. Calls `/api/demo` (proxy to server's `/demo/run-stream`). Displays live token stream + x402 flow events (deposit, payment verify, settlement tx on Arcscan).
+### apps/web (Next.js 14)
+- `/` — single-page app with 4 demo tabs.
+- `/api/demo`, `/api/stress`, `/api/agent` — proxy routes to the Express server (SSE passthrough).
+- Right-rail sidebar: hero $USDC metric, x402 flow timeline, payment card, live activity feed with Arcscan links.
 
 ### packages/cli
-External buyer CLI using `GatewayClient` from `@circle-fin/x402-batching/client`:
-- `nanopay balance` — show Gateway available/withdrawing/withdrawable USDC.
-- `nanopay deposit <amount>` — one-time onchain deposit to GatewayWallet.
-- `nanopay buy` — x402-paid single-stream LLM call.
-- `nanopay chain` — x402-paid agent-to-agent call.
-
-Reads `PRIVATE_KEY` from env. This is the authentic external-buyer demo path.
+External buyer CLI using `GatewayClient` — `balance`, `deposit`, `buy`, `chain`. Useful for CLI-only demo.
 
 ### packages/mcp
-MCP server exposing NanoPay as tools (`stream_chat`, `list_models`) so any MCP-compatible agent (Claude Code, Cursor, custom agents) can invoke x402-paid Gemini through a standard protocol.
+MCP server exposing NanoPay's billing as a tool. Any MCP-compatible agent (Claude Code, Cursor) can invoke x402-paid Gemini.
 
-### contracts
-Optional safety and attestation layers (not required for x402/Gateway flow):
-- `ServiceRegistry` — register LLM endpoints with per-token USDC prices.
-- `SpendingPolicy` — daily, per-stream, per-tx USD-denominated caps, enforced onchain.
-- `Attestation` — receipt for each closed stream (tokens, total paid, quality score).
+### contracts (Foundry)
+- `ServiceRegistry` — on-chain catalog of LLM endpoints with per-token USDC prices.
+- `SpendingPolicy` — daily / per-stream / per-tx caps, optional safety layer.
+- `Attestation` — homegrown receipt anchor.
 
-Deployed via `forge script script/Deploy.s.sol`.
+ERC-8004 contracts are **not redeployed** — we integrate with the canonical Arc deployments.
 
-### packages/shared
-Shared TypeScript types for requests, events, providers, and policies.
+## Why Arc
 
-## Why Nanopayments on Arc
+- Gemini token value ~$0.00005; Ethereum gas per tx ~$2. Ratio 40,000×.
+- Arc delivers sub-cent USDC settlement with sub-second finality.
+- Circle Nanopayments (Gateway + x402 + EIP-3009) turns N offchain authorizations into one onchain batch.
+- The marginal per-token settlement cost approaches zero as batches grow.
 
-- A Gemini Flash output token is worth ~$0.00005.
-- On Ethereum, a single settlement tx costs ~$2. Ratio 40,000×. Economically dead.
-- Per-call EVM settlements break down the moment you try to bill per token, per second, or per unit of compute.
-- Circle Nanopayments batches many offchain signed authorizations into single onchain settlements on Arc. Arc delivers sub-cent USDC fees and sub-second finality.
-- A 500-token chat becomes 500 offchain authorizations plus one (or a few) onchain batch. The marginal settlement cost per token approaches zero.
+## Track coverage
 
-## Tracks covered
-
-1. Usage-Based Compute Billing — primary. Per-token billing.
-2. Per-API Monetization — `gateway.require()` per-request.
-3. Agent-to-Agent Payment Loop — Pro → Flash chain.
-4. Real-Time Micro-Commerce — token-by-token commerce.
-5. Google Prize — Gemini 3 Flash and Pro are core models.
+1. **Usage-Based Compute Billing** — primary. Per-token pricing.
+2. **Per-API Monetization** — `gateway.require()` per request.
+3. **Agent-to-Agent Payment Loop** — Pro → Flash chain.
+4. **Real-Time Micro-Commerce** — token-by-token commerce.
+5. **Google Prize** — Gemini 3 + Function Calling for autonomous Circle API use.

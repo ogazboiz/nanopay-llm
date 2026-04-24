@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "version": 2,
+  "buildCommand": "pnpm --filter @nanopay/web build",
+  "outputDirectory": "apps/web/.next",
+  "installCommand": "pnpm install --frozen-lockfile=false",
+  "framework": "nextjs",
+  "env": {
+    "NEXT_PUBLIC_SERVER_URL": "https://nanopay-llm.up.railway.app"
+  }
+}

@@ -43,7 +43,7 @@ export async function runDemoBuyer(body: DemoRequest, emit: Emit): Promise<void>
 
   const payload = {
     prompt: body.prompt ?? "Explain why per-token on-chain billing needs Arc.",
-    model: body.model ?? "gemini-3-flash",
+    model: body.model ?? "gemini-3-flash-preview",
     maxUsd: body.maxUsd ?? 0.05,
   };
 

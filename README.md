@@ -1,67 +1,76 @@
 # NanoPay LLM
 
-Per-output-token USDC billing for AI inference, settled via **Circle Nanopayments** on **Arc Testnet**.
+**Per-output-token USDC billing for AI inference**, settled via **Circle Nanopayments** on **Arc Testnet**.
+Built for the [Agentic Economy on Arc hackathon](https://lablab.ai) · April 20-26, 2026.
 
-## What it does
+## What this is
 
-Every token an LLM generates is paid for with a sub-cent USDC authorization, batched and settled onchain by Circle Gateway. Users sign **one** offchain EIP-3009 authorization and receive hundreds of tokens. Stop reading mid-response, no further settlement happens. No subscriptions, no prepaid credits, no overcharge.
+Every output token Gemini generates is paid for with a sub-cent USDC authorization, signed offchain via **EIP-3009**, batched and settled onchain by **Circle Gateway**. Stop reading mid-response, billing stops.
 
-## Why it needs Arc
+A 500-token chat becomes 500 offchain authorizations collapsing into a batched onchain settlement. The per-token settlement cost approaches zero — making per-token AI billing economically real for the first time.
 
-- Gemini bills per output token at fractions of a cent.
-- Ethereum gas per transaction is around $2; a single token is worth $0.0001. Settling each one individually is off by 20,000×.
-- Circle Nanopayments batches many offchain authorizations into single onchain settlements via Circle Gateway.
-- Arc gives sub-cent USDC fees and sub-second finality. The marginal per-token settlement cost approaches zero. This is the only environment where per-token billing is economically viable.
+## Four demos in one app
 
-## Required technology used
+| Mode | What it shows |
+|---|---|
+| **Single stream** | One x402 authorization → Gemini 3 Flash streams tokens with a live counter |
+| **Agent chain** | Gemini 3 Pro plans an outline, hands off to Gemini 3 Flash drafter — two separate x402 payments |
+| **Stress** | Fire 10 / 50 / 100 / 200 sequential x402 authorizations in one click (satisfies hackathon's 50+ tx requirement) |
+| **Agent (Function Calling)** | Gemini 3 Pro autonomously calls Circle APIs — `get_gateway_balance`, `deposit_usdc_to_gateway`, `pay_for_inference` — to meet a user's goal |
 
-- **Arc Testnet** (chain 5042002) — EVM L1 for all settlement.
-- **USDC** — native gas and payment asset on Arc.
-- **Circle Nanopayments** (`@circle-fin/x402-batching`) — the exact infrastructure primitive.
-- **Circle Gateway** — unified USDC balance, facilitator for verify + settle.
-- **x402 protocol** — web-native 402 Payment Required standard.
+## Required tech, all integrated live
 
-## Features
+| Tech | How |
+|---|---|
+| **Arc Testnet** (5042002) | All settlement. RPC `https://rpc.testnet.arc.network` · Explorer https://testnet.arcscan.app |
+| **USDC** | ERC-20 at `0x3600000000000000000000000000000000000000`, 6-decimal transfers for all billing |
+| **Circle Nanopayments** | `@circle-fin/x402-batching` — `createGatewayMiddleware` on seller, `GatewayClient.pay()` on buyer |
 
-- `gateway.require("$X.XX")` middleware on the seller. `GatewayClient.pay()` on the buyer.
-- Per-token streaming billing via Gemini, counted offchain.
-- Agent-to-agent payment chain: Gemini 3 Pro plans, Gemini 3 Flash drafts, each hop is a separate x402-paid call.
-- On-chain safety contracts (Foundry): ServiceRegistry, SpendingPolicy, Attestation.
-- MCP server exposing NanoPay as tools for any MCP-compatible agent.
-- CLI buyer (`nanopay balance / deposit / buy / chain`) for the authentic external-buyer demo.
-- Web UI with live x402 flow events and Arcscan links.
+## Recommended tech, also integrated
 
-## Tracks
+- **Circle Gateway** — `deposit()`, `getBalances()`, batched settlement
+- **x402 facilitator** — Circle hosted at `gateway-api-testnet.circle.com`
+- **ERC-8004** — canonical Arc deployments:
+  - IdentityRegistry [`0x8004A818BFB912233c491871b3d84c89A494BD9e`](https://testnet.arcscan.app/address/0x8004A818BFB912233c491871b3d84c89A494BD9e)
+  - ReputationRegistry [`0x8004B663056A597Dffe9eCcC1965A193B7388713`](https://testnet.arcscan.app/address/0x8004B663056A597Dffe9eCcC1965A193B7388713)
+  - ValidationRegistry [`0x8004Cb1BF31DAf7788923b405b754f57acEB4272`](https://testnet.arcscan.app/address/0x8004Cb1BF31DAf7788923b405b754f57acEB4272)
+  - Server registers as an agent and records `giveFeedback` on every completed stream
+- **Gemini 3 Flash + Pro Preview** — streaming LLMs + Function Calling agent
 
-- Usage-Based Compute Billing (primary)
-- Per-API Monetization (`gateway.require()`)
-- Agent-to-Agent Payment Loop (Pro → Flash)
-- Real-Time Micro-Commerce
-- Google Prize (Gemini)
+## Margin story
+
+- Gemini 3 Flash output token value: **~$0.00005**
+- Ethereum mainnet settlement: **~$2.00** per tx — ratio 40,000×
+- Arc Testnet + Gateway batched settlement: **sub-cent, amortized near zero**
+
+This is the only environment where per-token onchain billing is economically viable.
 
 ## Quickstart
 
 ```sh
 pnpm install
 cp apps/server/.env.example apps/server/.env
-# edit .env: set GEMINI_API_KEY (optional), SELLER_ADDRESS, DEMO_BUYER_PRIVATE_KEY
-pnpm dev:server    # terminal 1
-pnpm dev:web       # terminal 2
+# set GEMINI_API_KEY, SELLER_ADDRESS, DEMO_BUYER_PRIVATE_KEY (funded from https://faucet.circle.com)
+pnpm dev:server    # :8787
+pnpm dev:web       # :3000
 ```
 
-Open http://localhost:3000, click **Run demo**. See `DEMO.md` for the full walkthrough.
+Open http://localhost:3000 and click any demo mode.
 
 ## Layout
 
 ```
-apps/server       Express seller + Gateway middleware + Gemini proxy
-apps/web          Next.js UI with live x402 flow visualization
-packages/cli      External buyer CLI using GatewayClient
+apps/server       Express seller · Gateway middleware · Gemini · Function Calling agent · stress runner · ERC-8004 client
+apps/web          Next.js UI · 4 demo modes · x402 flow timeline · live activity feed
+packages/cli      External buyer CLI (balance / deposit / buy / chain) using GatewayClient
 packages/mcp      MCP server exposing NanoPay as agent tools
 packages/shared   Shared TypeScript types
-contracts         Foundry Solidity: ServiceRegistry, SpendingPolicy, Attestation
+contracts         Foundry: ServiceRegistry, SpendingPolicy, Attestation (ERC-8004 is canonical, not redeployed)
 ```
 
-## Hackathon
+## Docs
 
-[Agentic Economy on Arc](https://lablab.ai) — April 20-26, 2026.
+- [SUBMISSION.md](./SUBMISSION.md) — hackathon submission content, margin story, feedback, video script
+- [DEMO.md](./DEMO.md) — reproducible demo walkthrough
+- [ARCHITECTURE.md](./ARCHITECTURE.md) — flow diagram and component roles
+- [DEPLOY.md](./DEPLOY.md) — Vercel + Railway deploy instructions

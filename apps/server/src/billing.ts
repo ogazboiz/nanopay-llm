@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { keccak256, stringToBytes, stringToHex, zeroHash } from "viem";
 import { publicClient, walletClient, usdToMicro, ATTESTATION_ADDRESS } from "./arc.js";
 import { attestationAbi } from "./abi.js";
+import { recordFeedback } from "./erc8004.js";
 
 interface Stream {
   id: string;
@@ -21,11 +22,18 @@ interface TokenResult {
   totalPaid: number;
 }
 
+interface CloseResult {
+  tokens: number;
+  totalPaid: number;
+  attestationTx?: `0x${string}`;
+  reputationTx?: `0x${string}`;
+}
+
 const streams = new Map<string, Stream>();
 
 const PRICE_PER_TOKEN_USD: Record<string, number> = {
-  "gemini-3-flash": 0.00005,
-  "gemini-3-pro": 0.0003,
+  "gemini-3-flash-preview": 0.00005,
+  "gemini-3-pro-preview": 0.0003,
 };
 
 export function providerIdFor(model: string): `0x${string}` {
@@ -74,14 +82,7 @@ export async function billToken(streamId: string, _token: string): Promise<Token
 export async function closeStream(
   streamId: string,
   qualityScore = 5,
-): Promise<
-  | {
-      tokens: number;
-      totalPaid: number;
-      attestationTx?: `0x${string}`;
-    }
-  | undefined
-> {
+): Promise<CloseResult | undefined> {
   const stream = streams.get(streamId);
   if (!stream) return undefined;
   streams.delete(streamId);
@@ -111,10 +112,17 @@ export async function closeStream(
     }
   }
 
+  let reputationTx: `0x${string}` | undefined;
+  if (stream.tokensBilled > 0) {
+    const tag = `nanopay_stream_${stream.model.replace(/[^a-z0-9-]/gi, "_")}`;
+    reputationTx = await recordFeedback({ score: qualityScore * 20, tag });
+  }
+
   return {
     tokens: stream.tokensBilled,
     totalPaid: stream.totalPaidUsd,
     attestationTx,
+    reputationTx,
   };
 }
 

@@ -7,6 +7,9 @@ import { openStream, closeStream, billToken } from "./billing.js";
 import { runAgentChain } from "./chain.js";
 import { serviceAccount } from "./arc.js";
 import { runDemoBuyer } from "./demo-buyer.js";
+import { runStress } from "./stress.js";
+import { runAgent } from "./agent.js";
+import { registerAgentIfNeeded, getAgentIdForService } from "./erc8004.js";
 
 type PaidRequest = Request & {
   payment?: {
@@ -40,7 +43,8 @@ const gateway = SELLER_ADDRESS
     })
   : undefined;
 
-app.get("/health", (_req, res) => {
+app.get("/health", async (_req, res) => {
+  const agentId = await getAgentIdForService();
   res.json({
     ok: true,
     mock: isMockMode(),
@@ -49,6 +53,12 @@ app.get("/health", (_req, res) => {
     sellerAddress: SELLER_ADDRESS ?? null,
     facilitatorUrl: FACILITATOR_URL,
     network: ARC_NETWORK_CAIP,
+    erc8004: {
+      identityRegistry: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
+      reputationRegistry: "0x8004B663056A597Dffe9eCcC1965A193B7388713",
+      validationRegistry: "0x8004Cb1BF31DAf7788923b405b754f57acEB4272",
+      agentId: agentId?.toString() ?? null,
+    },
   });
 });
 
@@ -63,7 +73,7 @@ const handleStream: RequestHandler = async (req, res) => {
   const userWallet = (paymentReq.payment?.payer ??
     body.userWallet ??
     "0x000000000000000000000000000000000000dEaD") as `0x${string}`;
-  const model = body.model ?? "gemini-3-flash";
+  const model = body.model ?? "gemini-3-flash-preview";
   const prompt = body.prompt ?? "Explain why per-token on-chain billing needs Arc.";
   const maxUsd = body.maxUsd ?? 0.05;
 
@@ -110,8 +120,8 @@ const handleChain: RequestHandler = async (req, res) => {
     "0x000000000000000000000000000000000000dEaD") as `0x${string}`;
   const prompt = body.prompt ?? "Explain why per-token on-chain billing needs Arc.";
   const maxUsd = body.maxUsd ?? 0.1;
-  const reasoner = body.reasoner ?? "gemini-3-pro";
-  const drafter = body.drafter ?? "gemini-3-flash";
+  const reasoner = body.reasoner ?? "gemini-3-pro-preview";
+  const drafter = body.drafter ?? "gemini-3-flash-preview";
 
   const events: unknown[] = [];
   const reasonerTokens: string[] = [];
@@ -145,6 +155,40 @@ if (gateway) {
   app.post("/chain", handleChain);
 }
 
+app.post("/demo/agent", async (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+  try {
+    await runAgent(req.body ?? {}, (event) => {
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    });
+  } catch (err) {
+    res.write(`event: error\ndata: ${JSON.stringify({ message: (err as Error).message })}\n\n`);
+  } finally {
+    res.write(`event: done\ndata: {}\n\n`);
+    res.end();
+  }
+});
+
+app.post("/demo/stress", async (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+  try {
+    await runStress(req.body ?? {}, (event) => {
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    });
+  } catch (err) {
+    res.write(`event: error\ndata: ${JSON.stringify({ message: (err as Error).message })}\n\n`);
+  } finally {
+    res.write(`event: done\ndata: {}\n\n`);
+    res.end();
+  }
+});
+
 app.post("/demo/run-stream", async (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -163,9 +207,25 @@ app.post("/demo/run-stream", async (req, res) => {
 });
 
 const port = Number(process.env.PORT ?? 8787);
-app.listen(port, () => {
+app.listen(port, async () => {
   console.log(`NanoPay server listening on :${port}`);
   console.log(`  Mock LLM: ${isMockMode()}`);
   console.log(`  Gateway ready: ${Boolean(gateway)}`);
   console.log(`  Seller address: ${SELLER_ADDRESS ?? "(none)"}`);
+
+  if (process.env.ERC8004_REGISTER_ON_STARTUP === "1" && serviceAccount) {
+    const r = await registerAgentIfNeeded();
+    if (r.agentId !== undefined) {
+      console.log(`  ERC-8004 agent id: ${r.agentId.toString()}`);
+    } else if (r.registerTx) {
+      console.log(`  ERC-8004 register submitted: ${r.registerTx}`);
+    } else {
+      console.log(`  ERC-8004 agent not registered (opt in via ERC8004_REGISTER_ON_STARTUP=1)`);
+    }
+  } else {
+    const existing = await getAgentIdForService().catch(() => undefined);
+    if (existing !== undefined) {
+      console.log(`  ERC-8004 agent id: ${existing.toString()}`);
+    }
+  }
 });

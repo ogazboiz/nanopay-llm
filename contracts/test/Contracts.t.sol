@@ -14,11 +14,11 @@ contract ServiceRegistryTest is Test {
     }
 
     function test_registerProvider() public {
-        bytes32 id = keccak256("gemini-3-flash");
-        registry.register(id, "gemini-3-flash", 50, "https://api.nanopay.local/gemini");
+        bytes32 id = keccak256("gemini-3-flash-preview");
+        registry.register(id, "gemini-3-flash-preview", 50, "https://api.nanopay.local/gemini");
         (address wallet, string memory model, uint256 price, , bool active) = registry.providers(id);
         assertEq(wallet, address(this));
-        assertEq(model, "gemini-3-flash");
+        assertEq(model, "gemini-3-flash-preview");
         assertEq(price, 50);
         assertTrue(active);
     }
@@ -57,7 +57,7 @@ contract AttestationTest is Test {
     function test_anchorReceipt() public {
         attestation = new Attestation();
         bytes32 streamId = keccak256("stream-1");
-        attestation.anchor(streamId, address(this), keccak256("gemini-3-flash"), 200, 10_000, 5);
+        attestation.anchor(streamId, address(this), keccak256("gemini-3-flash-preview"), 200, 10_000, 5);
         (address payer,, uint256 tokens, uint256 total, uint8 quality,) = attestation.receipts(streamId);
         assertEq(payer, address(this));
         assertEq(tokens, 200);

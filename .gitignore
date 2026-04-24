@@ -26,6 +26,9 @@ coverage/
 .nyc_output/
 
 *.tsbuildinfo
+SELLER_WALLET.txt
+SUBMISSION.md
+
 
 .turbo/
 .cache/

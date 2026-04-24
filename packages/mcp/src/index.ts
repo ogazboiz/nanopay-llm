@@ -19,7 +19,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: {
-          model: { type: "string", description: "e.g. gemini-3-flash" },
+          model: { type: "string", description: "e.g. gemini-3-flash-preview" },
           prompt: { type: "string" },
           maxUsd: { type: "number", description: "Max spend cap in USD" },
         },

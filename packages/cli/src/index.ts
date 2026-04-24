@@ -48,7 +48,7 @@ program
   .command("buy")
   .description("Pay for an LLM stream via x402 + Gateway batched settlement")
   .option("--prompt <text>", "Prompt to send", "Explain why per-token on-chain billing needs Arc.")
-  .option("--model <id>", "Model id", "gemini-3-flash")
+  .option("--model <id>", "Model id", "gemini-3-flash-preview")
   .option("--max-usd <n>", "Max spend in USD", "0.05")
   .option("--server <url>", "Seller endpoint", "http://localhost:8787/stream")
   .action(async (opts) => {
