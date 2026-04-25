@@ -23,6 +23,7 @@ import {
   Zap,
 } from "lucide-react";
 import { cn } from "../lib/cn";
+import { Markdown } from "../components/Markdown";
 
 type Mode = "stream" | "chain" | "stress" | "agent";
 
@@ -773,10 +774,10 @@ function OutputCard({
       </div>
       <div className="relative p-5 min-h-[140px] bg-black/30">
         {text ? (
-          <p className="text-[15px] text-neutral-100 leading-[1.7] whitespace-pre-wrap font-sans">
-            {text}
+          <div>
+            <Markdown text={text} />
             {running && <Caret />}
-          </p>
+          </div>
         ) : (
           <div className="flex items-center gap-2 text-sm text-neutral-500">
             <div className={cn("w-1.5 h-1.5 rounded-full animate-pulse", accents.dot)} />
@@ -935,9 +936,7 @@ function AgentOutput({ text, events, running }: { text: string; events: Event[];
               <CheckCircle2 size={12} />
               Final answer
             </div>
-            <p className="text-[14px] text-neutral-100 leading-relaxed whitespace-pre-wrap font-sans">
-              {text}
-            </p>
+            <Markdown text={text} />
           </div>
         )}
         {!text && !running && toolCalls.length === 0 && (
